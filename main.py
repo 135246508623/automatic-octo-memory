@@ -193,6 +193,61 @@ class DeltaBypass(Star):
         else:
             yield event.plain_result("用法：/delta on 开启，/delta off 关闭")
 
+    @filter.command("getkey")
+    async def getkey(self, event: AstrMessageEvent):
+        parts = event.message_str.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            yield event.plain_result("请提供链接，例如：/getkey https://auth.platorelay.com/a?d=...")
+            return
+
+        raw_url = parts[1].strip()
+        yield event.plain_result(f"⏳ 检测到 Delta 链接，开始分析...")
+
+        start_time = time.time()
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
+
+        try:
+            target_url = decode_base64_url(raw_url)
+            yield event.plain_result(f"🔍 目标地址: {target_url}")
+
+            resp = session.get(target_url, timeout=15)
+            if resp.status_code != 200:
+                elapsed = time.time() - start_time
+                yield event.plain_result(f"❌ 页面访问失败，状态码: {resp.status_code}（耗时 {elapsed:.2f} 秒）")
+                return
+
+            if 'sentry' in resp.url or 'captcha' in resp.text.lower():
+                yield event.plain_result("🛡️ 检测到验证码，尝试绕过...")
+                try:
+                    session = bypass_captcha(session)
+                except Exception as e:
+                    elapsed = time.time() - start_time
+                    yield event.plain_result(f"❌ 验证码绕过失败: {e}（耗时 {elapsed:.2f} 秒）")
+                    return
+                resp = session.get(target_url, timeout=15)
+                if resp.status_code != 200:
+                    elapsed = time.time() - start_time
+                    yield event.plain_result(f"❌ 验证后页面访问失败，状态码: {resp.status_code}（耗时 {elapsed:.2f} 秒）")
+                    return
+
+            card_key = extract_card_key(resp.text)
+            elapsed = time.time() - start_time
+            if card_key:
+                user_name = event.get_sender_name()
+                at_user = f"[At,qq={event.get_sender_id()},name={user_name}]"
+                msg = f"{at_user}\n您的\nDelta卡密: {card_key}\n耗时: {elapsed:.2f}秒\n完成啦可以加入我们\n请不要频繁发送Delta链接\n可以加入大寒脚本主群吗 {AD_URL}"
+                yield event.plain_result(msg)
+            else:
+                elapsed = time.time() - start_time
+                yield event.plain_result(f"❌ 未找到卡密（耗时 {elapsed:.2f} 秒）")
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            yield event.plain_result(f"❌ 处理异常: {e}（耗时 {elapsed:.2f} 秒）")
+
     @filter.on_decorating_result()
     async def on_msg(self, event: AstrMessageEvent):
         if not event.is_group:
